@@ -1,0 +1,387 @@
+---
+title: "Coursework Project"
+author: "Student N°200580234"
+---
+
+#### Loding relevant librarys
+
+```{r}
+library("dplyr")
+library("tidyr")
+library("tidyverse")
+library("ggplot2")
+library('vioplot')
+library('igraph')
+library('reshape2')
+library('mlr3')
+library('mlr3learners')
+library('mlr3pipelines')
+library('xgboost')
+```
+
+#### Importing, cleaning, preparing data
+```{r}
+#Import Data
+planes_data <- read.csv("plane-data.csv")
+airport_data <- read.csv("airports.csv")
+flights <- read.csv("sampled_data.csv")
+```
+
+#### Dropping cancelled flights
+```{r}
+flights <- filter(flights, Cancelled == 0)
+summary(flights)
+```
+#### Clasifying delays and previous aircraft delay
+```{r}
+flights <- flights %>% 
+  mutate(delayed = case_when(flights$ArrDelay >= 15 ~ 1, TRUE ~ 0)) %>% mutate(predelayed = case_when(flights$LateAircraftDelay >= 15 ~ 1, TRUE ~ 0))
+tail(flights)
+```
+## Question 1
+#### Selecting relevant columns and dropping NAs
+```{r}
+delay_columns <- c("Year","Month","DayofMonth","DayOfWeek","ArrDelay","CRSDepTime","delayed")
+delays_df <- select(flights, delay_columns)
+delays_df <- delays_df %>% drop_na()
+head(delays_df)
+```
+
+#### Calculating Ratio per day of week
+```{r}
+delays_dayofweek <- delays_df %>% 
+  group_by(DayOfWeek) %>% 
+  summarise(delayes = sum(delayed), total_flight = n(), flight_ratio= delayes/total_flight) %>%
+  arrange(DayOfWeek)
+
+head(delays_dayofweek)
+  
+```
+
+#### Plotting delay per day of week
+```{r} 
+gr_dayofweek <- ggplot(delays_dayofweek, aes(x= DayOfWeek, y= flight_ratio, colour= DayOfWeek, fill = DayOfWeek)) + 
+  geom_bar(stat = 'identity') +
+  labs(title = "Delay per day of Week", x = "Day of Week", y = "Daily ratio")
+  
+gr_dayofweek
+```
+
+```{r} 
+vioplot(DayOfWeek ~ delayed, data = delays_df)
+```
+#### Calculating ratio per month
+```{r}
+delays_month <- delays_df %>% 
+  group_by(Month) %>% 
+  summarise(delayes = sum(delayed), total_flight = n(), flight_ratio= delayes/total_flight) %>%
+  arrange((Month))
+head(delays_month)
+```
+#### Plotting ratio per month
+```{r}
+gr_month <- ggplot(delays_month, aes(x= Month, y= flight_ratio, colour= Month, fill = Month)) + 
+  geom_bar(stat = 'identity') +
+  labs(title = "Delay per Month", x = "Month", y = "Monthly ratio")
+
+gr_month
+```
+
+```{r} 
+vioplot(Month ~ delayed, data = delays_df)
+```
+#### Calculating ratio per hour
+```{r}
+delays_time <- delays_df %>% mutate(Time = round(CRSDepTime/100,0))
+
+delays_time <- delays_time %>% 
+  group_by(Time) %>% 
+  summarise(delayes = sum(delayed), total_flight = n(), flight_ratio= delayes/total_flight) %>%
+  filter(Time >= 5) %>%
+  arrange(Time) 
+head(delays_time)
+```
+#### Plotting ratio per hour
+```{r}
+gr_time <- ggplot(delays_time, aes(x= Time, y= flight_ratio, colour= Time, fill = Time)) + 
+  geom_bar(stat = 'identity') +
+  labs(title = "Delay per Hour", x = "Hour of day", y = "Hourly ratio")
+
+gr_time
+```
+
+```{r} 
+vioplot(CRSDepTime ~ delayed, data = delays_df)
+```
+
+## Question 2
+#### Joining Dataframes and wrangling data
+
+```{r} 
+flights_planes <- flights %>%  
+  left_join(planes_data, by= c("TailNum" = "tailnum"))
+flights_age_columns = c("Year","Month","DayofMonth","delayed","year")
+flights_planes <- select(flights_planes,flights_age_columns)
+flights_planes  <- flights_planes %>% 
+  drop_na("year")
+flights_planes[,5] <- sapply(flights_planes[,5], as.numeric)
+flights_planes <- drop_na(flights_planes)
+flights_planes <- flights_planes %>% filter( year > 0 & year<2007)
+flights_planes <- flights_planes %>% mutate(Age = Year - year)
+head(flights_planes)
+```
+#### Plotting delays per age
+```{r}
+delays_age <- flights_planes %>% 
+  group_by(Age) %>%
+  summarise(delayes = sum(delayed), total_flight = n(), flight_ratio= delayes/total_flight) %>%
+  arrange(Age)
+
+gr_age <- ggplot(delays_age, aes(x= Age, y=flight_ratio)) + 
+  geom_histogram(stat = 'identity')
+gr_age
+```
+
+```{r} 
+vioplot(Age ~ delayed, data = flights_planes)
+```
+
+## Question 3
+#### Selecting Columns
+```{r} 
+flights_people <- flights[c('Year','Month','Origin','Dest')]
+head(flights_people)
+```
+
+#### Data Wranlging and Joining data
+```{r}
+flights_people <- flights_people %>%
+  left_join(airport_data, by = c("Origin" = "iata"))
+flights_people <- rename(flights_people,  "Origin_city" = "city")
+flights_people <- flights_people %>% left_join(airport_data, by = c("Dest" = "iata"))
+flights_people <- rename(flights_people, "Destination_city" = 'city')
+flights_people_columns <- c("Year","Month", "Origin_city", "Destination_city")
+flights_people <- select(flights_people,flights_people_columns)
+flights_people <- drop_na(flights_people)
+head(flights_people)
+```
+#### Calculating ratio per Origin city and selecting top
+```{r}
+flights_people_o <- flights_people %>%
+  group_by(Origin_city, Year) %>% 
+  summarise(Count = n()) %>% 
+  dcast(formula = Origin_city ~ Year,
+        value.var = 'Count' )
+flights_people_o <- flights_people_o %>%
+  mutate(Difference = abs(flights_people_o[,3] - flights_people_o[,2]), Total = (flights_people_o[,3] + flights_people_o[,2]), Ratio = Difference*100 /Total )
+flights_people_o <- flights_people_o %>% 
+  filter(Total > 60) %>%
+  arrange(desc(Ratio))
+ 
+
+head(flights_people_o)
+```
+#### Plotting differences in frequency per year
+```{r}
+flights_people_o <- flights_people_o %>%
+  top_n(5)
+flights_people_o <- flights_people_o[c(1,2,3)]
+flights_people_o <- melt(flights_people_o, id.vars = "Origin_city", variable.name = "Year", value.name = "Count")
+
+
+gr_origin <- ggplot(flights_people_o, aes(fill = Year, x= Origin_city, y = Count)) + 
+  geom_bar(position = "dodge", stat = 'identity')
+gr_origin
+```
+#### Calculating ratio per Destination city and selecting top
+```{r}
+flights_people_d <- flights_people %>%
+  group_by(Destination_city, Year) %>% 
+  summarise(Count = n()) %>% 
+  dcast(formula = Destination_city ~ Year,
+        value.var = 'Count' )
+flights_people_d <- flights_people_d %>%
+  mutate(Difference = abs(flights_people_d[,3] - flights_people_d[,2]), Total = (flights_people_d[,3] + flights_people_d[,2]), Ratio = Difference*100 /Total )
+flights_people_d <- flights_people_d %>% 
+  filter(Total > 60) %>%
+  arrange(desc(Ratio))
+ 
+
+head(flights_people_d)
+```
+#### Plotting difference for Destination
+```{r}
+flights_people_d <- flights_people_d %>%
+  top_n(5)
+flights_people_d <- flights_people_d[c(1,2,3)]
+flights_people_d <- melt(flights_people_d, id.vars = "Destination_city", variable.name = "Year", value.name = "Count")
+
+
+gr_destination <- ggplot(flights_people_d, aes(fill = Year, x= Destination_city, y = Count)) + 
+  geom_bar(position = "dodge", stat = 'identity')
+gr_destination
+
+```
+#### Grouping by origin and destination and selecting top with most frequency for year 2005
+```{r}
+flights_people_2005 <- filter(flights_people, Year == 2005)
+flights_people_2005 <- flights_people_2005 %>% 
+  group_by(Origin_city,Destination_city) %>%
+  summarise(Total = n()) %>%
+  arrange(desc(Total))
+  
+flights_people_2005 <- flights_people_2005[1:60,]
+flights_people_2005
+```
+#### Creating list of nodes filtered by data from previous step
+```{r}
+airport_data_cities <- airport_data[,c(3,1,2,4,5,6,7)]
+airport_data_cities <- airport_data_cities %>% distinct(city) %>% drop_na(city)
+airport_data_cities_2005 <- airport_data_cities %>% filter(city %in% flights_people_2005$Origin_city | city %in% flights_people_2005$Destination_city ) 
+airport_data_cities_2005
+```
+#### Plotting network visualization for year 2005
+```{r}
+network_2005 <- graph_from_data_frame(d=flights_people_2005, vertices = airport_data_cities_2005, directed = T)
+network_2005 <- simplify(network_2005, remove.multiple = F, remove.loops = T)
+plot(network_2005, edge.arrow.size = 1)
+```
+#### Grouping by origin and destination and selecting top with most frequency for year 2006
+```{r}
+flights_people_2006 <- filter(flights_people, Year == 2006)
+flights_people_2006 <- flights_people_2006 %>% 
+  group_by(Origin_city,Destination_city) %>%
+  summarise(Total = n()) %>%
+  arrange(desc(Total))
+  
+flights_people_2006 <- flights_people_2006[1:60,]
+flights_people_2006
+```
+#### Creating list of nodes filtered by data from previous step
+```{r}
+airport_data_cities_2006 <- airport_data_cities %>% filter(city %in% flights_people_2006$Origin_city | city %in% flights_people_2006$Destination_city ) 
+airport_data_cities_2006
+```
+#### Plotting network visualization for year 2006
+```{r}
+network_2006 <- graph_from_data_frame(d=flights_people_2006, vertices = airport_data_cities_2006, directed = T)
+network_2006 <- simplify(network_2006, remove.multiple = F, remove.loops = T)
+plot(network_2006, edge.arrow.size = 1)
+```
+## Question 4
+#### Selecting delayed flights
+```{r}
+flights_Late <- filter(flights, delayed == 1)
+head(flights_Late)
+```
+#### Calculating percentage of delayed flights with previous aircraft delay
+```{r}
+sum(flights_Late$predelayed)*100/sum(flights_Late$delayed)
+```
+#### Selecting flights with previous delayed aircraft
+```{r}
+flights_pre <- filter(flights, predelayed == 1)
+head(flights_pre)
+```
+#### Calculating percentage of flights with previous aircraft delay that where also delayed
+```{r}
+sum(flights_pre$delayed)*100/sum(flights_pre$predelayed)
+```
+#### Looking for airport with most delays in a day by origin
+```{r}
+worst_day_o <- flights %>%
+  group_by(Year, Month, DayofMonth, Origin) %>%
+  summarise(Sum = sum(delayed))%>%
+  arrange(desc(Sum))
+worst_day_o <- worst_day_o[1:5,]
+worst_day_o
+```
+#### Inspecting data for that day
+```{r}
+dep_worst_o <- filter(flights, Year == 2006 & Month == 10 & DayofMonth == 17 & Origin == 'ATL')
+dep_worst_o
+```
+#### Looking for airport with most delays in a day by destination
+```{r}
+worst_day_d <- flights %>%
+  group_by(Year, Month, DayofMonth, Dest) %>%
+  summarise(Sum = sum(delayed))%>%
+  arrange(desc(Sum),Year)
+worst_day_d <- worst_day_d[2,]
+worst_day_d
+```
+#### Inspecting that day
+```{r}
+dep_worst_d <- filter(flights, Year == 2006 & Month == 10 & DayofMonth == 19 & Origin == 'ATL')
+dep_worst_d
+```
+## Question 5
+#### Setting as factor relevant categorical variables
+```{r}
+flights$delayed <- factor(flights$delayed)
+flights$Dest <- factor(flights$Dest)
+flights$Origin <- factor(flights$Origin)
+flights$TailNum <- factor(flights$TailNum)
+flights$UniqueCarrier <- factor(flights$UniqueCarrier)
+```
+#### Dropping NAs and sampling data because of performance issues with my PC
+```{r}
+flights_model <- flights %>% drop_na()
+flights_model <- sample_n(flights_model,500)
+```
+
+#### Creating task for model
+```{r}
+task <- TaskClassif$new('flights_model', backend = flights_model, target = "delayed")
+task$select(c("Year", "Month","DayOfWeek","CRSDepTime","UniqueCarrier","Origin","Dest","TailNum","Distance","LateAircraftDelay"))
+measure <- msr("classif.ce")
+task
+```
+#### Creating encoder for categorical variables
+```{r}
+fencoder <- po("encode", method = "treatment", affect_columns = selector_type("factor"))
+```
+
+#### Splitting data into test and train
+```{r}
+set.seed(1)
+train_set <- sample(task$nrow, 0.8*task$nrow)
+test_set <- setdiff(seq_len(task$nrow), train_set)
+```
+
+#### Dropping levels in categorial variable
+```{r}
+levels(droplevels(flights_model$Origin))
+```
+#### Fitting logistic regression
+```{r}
+learner_lr <- lrn("classif.log_reg")
+gc_lr <- po("scale") %>>% fencoder %>>% po("imputemean") %>>% po(learner_gr)
+glrn_lr <- GraphLearner$new(gc_lr)
+
+glrn_lr$train(task, row_ids = train_set)
+glrn_lr$predict(task, row_ids = test_set)$score()
+```
+#### Fitting Gradient Boosting
+```{r}
+learner_gr <- lrn("classif.xgboost")
+gc_gr <-po("scale") %>>% fencoder %>>% po("imputemean") %>>% po(learner_gr)
+glrn_gr <- GraphLearner$new(gc_gr)
+glrn_gr$train(task, row_ids = train_set)
+glrn_gr$predict(task, row_ids = test_set)$score()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

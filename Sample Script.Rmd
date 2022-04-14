@@ -1,0 +1,23 @@
+---
+title: "Sample Data"
+author:
+date: "27-03-2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load CSVs
+
+```{r}
+library("dplyr")
+library("tidyr")
+flight_94 <- read.csv("2005.csv",)
+flight_95 <- read.csv("2006.csv")
+flights <- rbind(flight_94,flight_95)
+flights_csv <- sample_n(flights, 30000)
+write.csv(flights_csv, "sampled_data.csv", row.names = FALSE)
+```
+
